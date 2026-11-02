@@ -16,8 +16,6 @@ class Rc < Formula
   version "$version"
   license "MIT"
 
-  depends_on "rc-profiler-go"
-
   on_macos do
 $(platform arm darwin_arm64)
 $(platform intel darwin_amd64)

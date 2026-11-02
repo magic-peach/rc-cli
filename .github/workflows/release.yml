@@ -38,7 +38,6 @@ jobs:
       group: release
     env:
       GH_TOKEN: ${{ github.token }}
-      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -54,6 +53,9 @@ jobs:
             echo "Nothing to release since the last tag"
             exit 0
           fi
+          curl --fail --location https://github.com/runtimeconditions/spec/releases/download/v0.4.0/runtimeconditions.profile.schema.yaml --output "$RUNNER_TEMP/core-schema.yaml"
+          echo "96d430c7936fcf7334aa9613f63bb306592e07cf56fe4154af57933d2c1480e6  $RUNNER_TEMP/core-schema.yaml" | sha256sum --check
+          schema=$(base64 -w0 "$RUNNER_TEMP/core-schema.yaml")
           mkdir dist
           for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64; do
             os=${target%/*} arch=${target#*/}
@@ -61,7 +63,7 @@ jobs:
             bin=rc
             [ "$os" = windows ] && bin=rc.exe
             mkdir "dist/$name"
-            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$version" -o "dist/$name/$bin" ./cmd/rc
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$version -X github.com/runtimeconditions/go-rc-profiler/extensioncheck.installedCoreSchemaBase64=$schema" -o "dist/$name/$bin" ./cmd/rc
             if [ "$os" = windows ]; then
               (cd dist/$name && zip -q "../$name.zip" "$bin")
             else
@@ -71,9 +73,6 @@ jobs:
           done
           (cd dist && sha256sum rc_* > checksums.txt)
           scripts/formula.sh "$version" dist/checksums.txt > dist/rc.rb
-          profiler=$(gh release view --repo runtimeconditions/go-rc-profiler --json tagName --jq .tagName)
-          gh release download "$profiler" --repo runtimeconditions/go-rc-profiler --pattern checksums.txt --dir "$RUNNER_TEMP/go-profiler"
-          scripts/go-profiler-formula.sh "${profiler#v}" "$RUNNER_TEMP/go-profiler/checksums.txt" > dist/rc-profiler-go.rb
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: steps.build.outputs.version != ''
@@ -87,16 +86,16 @@ jobs:
           git tag "v$VERSION"
           git push origin "v$VERSION"
           gh release create "v$VERSION" --generate-notes --verify-tag dist/*
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: tap
+        if: ${{ vars.RC_RELEASE_APP_ID != '' }}
+        with:
+          app-id: ${{ vars.RC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.RC_RELEASE_APP_KEY }}
+          owner: runtimeconditions
+          repositories: homebrew-tools
       - name: Update the Homebrew tap
-        if: steps.build.outputs.version != '' && env.TAP_TOKEN != ''
+        if: ${{ steps.tap.outputs.token != '' }}
         env:
-          VERSION: ${{ steps.build.outputs.version }}
-        run: |
-          git config --global url."https://x-access-token:${TAP_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git clone --depth 1 https://github.com/runtimeconditions/homebrew-tools.git "$RUNNER_TEMP/tap"
-          cp dist/rc.rb dist/rc-profiler-go.rb "$RUNNER_TEMP/tap/Formula/"
-          cd "$RUNNER_TEMP/tap"
-          git add Formula
-          git diff --cached --quiet && exit 0
-          git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "rc $VERSION"
-          git push origin HEAD:main
+          GH_TOKEN: ${{ steps.tap.outputs.token }}
+        run: gh workflow run update-formulas.yml --repo runtimeconditions/homebrew-tools
