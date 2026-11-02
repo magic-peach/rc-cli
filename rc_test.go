@@ -47,7 +47,7 @@ func TestProfilePassesArgumentsToThePathExecutable(t *testing.T) {
 }
 
 func TestProfileFindsPublishedExecutableNamesAndEnvironmentOverrides(t *testing.T) {
-	t.Setenv("PATH", fakeProfiler(t, "runtimeconditions-typescript-profiler"))
+	t.Setenv("PATH", withPath(fakeProfiler(t, "runtimeconditions-typescript-profiler"), fakeRuntime(t, "node"), fakeRuntime(t, "python3")))
 	if out, _, err := rc("profile", "typescript", "--version"); err != nil || out != "args: --version\n" {
 		t.Fatalf("%v\n%q", err, out)
 	}
@@ -194,5 +194,152 @@ func TestDoctorListsToolsAndFlagsIncompatibleProfilers(t *testing.T) {
 	t.Setenv("FAKE_SCHEMAS", "")
 	if out, _, err = rc("doctor"); err != nil || !strings.Contains(out, "unchecked: core schemas not reported") || !strings.Contains(out, "args: --version") {
 		t.Fatalf("legacy profiler not described: %v\n%s", err, out)
+	}
+}
+
+func fakeRuntime(t *testing.T, name string) string {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func withPath(dirs ...string) string { return strings.Join(dirs, string(os.PathListSeparator)) }
+
+func TestPluginAndRuntimeMustBothBeInstalled(t *testing.T) {
+	plugin := fakeProfiler(t, "rc-profiler-typescript")
+	node := fakeRuntime(t, "node")
+	notInstalled := "the typescript profiler is not installed: brew install runtimeconditions/tools/rc-profiler-typescript"
+	noNode := "the typescript profiler needs Node.js, but node was not found on PATH: brew install node"
+	cases := []struct {
+		name, path string
+		want       []string
+		absent     []string
+	}{
+		{"plugin missing", node, []string{notInstalled}, []string{"Node.js"}},
+		{"runtime missing", plugin, []string{noNode}, []string{"not installed"}},
+		{"both missing", t.TempDir(), []string{notInstalled, noNode}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("PATH", c.path)
+			var exit *ExitError
+			out, _, err := rc("profile", "typescript", "generate")
+			if err == nil || errors.As(err, &exit) || out != "" {
+				t.Fatalf("%v %q", err, out)
+			}
+			for _, want := range c.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("lacks %q: %v", want, err)
+				}
+			}
+			for _, absent := range c.absent {
+				if strings.Contains(err.Error(), absent) {
+					t.Fatalf("unexpected %q: %v", absent, err)
+				}
+			}
+		})
+	}
+	t.Setenv("PATH", withPath(plugin, node))
+	t.Setenv("FAKE_EXIT", "3")
+	var exit *ExitError
+	out, _, err := rc("profile", "typescript", "generate", "--name", "orders", "-x")
+	if !errors.As(err, &exit) || exit.Code != 3 || out != "args: generate --name orders -x\n" {
+		t.Fatalf("%v %q", err, out)
+	}
+}
+
+func TestPythonAndJavaPluginHintsAndRuntimes(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, _, err := rc("profile", "python", "generate")
+	for _, want := range []string{"pip install runtimeconditions-profiler", "runtimeconditions-python-profiler", "needs Python, but python3 was not found"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("python lacks %q: %v", want, err)
+		}
+	}
+	_, _, err = rc("profile", "java", "generate")
+	for _, want := range []string{"the java profiler is not installed: the Java profiler is not released yet", "needs Java, but java was not found"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("java lacks %q: %v", want, err)
+		}
+	}
+	t.Setenv("PATH", withPath(fakeProfiler(t, "runtimeconditions-python-profiler"), fakeRuntime(t, "python3")))
+	if out, _, err := rc("profile", "python", "generate"); err != nil || out != "args: generate\n" {
+		t.Fatalf("%v\n%q", err, out)
+	}
+}
+
+func installPlugin(t *testing.T, language, manifest string) {
+	prefix := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(prefix, "share", "rc", "plugins"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(prefix, "bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	profiler := fakeProfiler(t, "rc-profiler-"+language)
+	if err := os.Symlink(filepath.Join(profiler, "rc-profiler-"+language), filepath.Join(prefix, "bin", "rc-profiler-"+language)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prefix, "share", "rc", "plugins", language+".json"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Join(prefix, "bin"))
+}
+
+func TestPluginManifestOverridesTheBuiltInRuntime(t *testing.T) {
+	installPlugin(t, "typescript", `{"language":"typescript","runtime":{"command":"bun","name":"Bun","install":"brew install bun"}}`)
+	base := os.Getenv("PATH")
+	t.Setenv("PATH", withPath(base, fakeRuntime(t, "node")))
+	_, errout, err := rc("profile", "typescript", "generate")
+	if err == nil || !strings.Contains(err.Error(), "the typescript profiler needs Bun, but bun was not found on PATH: brew install bun") || errout != "" {
+		t.Fatalf("%v %q", err, errout)
+	}
+	t.Setenv("PATH", withPath(base, fakeRuntime(t, "bun")))
+	if out, _, err := rc("profile", "typescript", "generate"); err != nil || out != "args: generate\n" {
+		t.Fatalf("%v %q", err, out)
+	}
+}
+
+func TestPluginManifestAppliesToALanguageRcDoesNotKnow(t *testing.T) {
+	installPlugin(t, "ruby", `{"language":"ruby","runtime":{"command":"ruby"}}`)
+	if _, _, err := rc("profile", "ruby", "generate"); err == nil || !strings.Contains(err.Error(), "the ruby profiler needs ruby, but ruby was not found on PATH") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestMalformedManifestFallsBackToTheBuiltInRuntimeWithAWarning(t *testing.T) {
+	for _, manifest := range []string{
+		`{not json`,
+		`{"language":"python","runtime":{"command":"x"}}`,
+		`{"language":"typescript","runtime":{}}`,
+		`{"language":"typescript","runtime":{"command":"bun","minimum":"1.1"}}`,
+	} {
+		installPlugin(t, "typescript", manifest)
+		_, errout, err := rc("profile", "typescript", "generate")
+		if err == nil || !strings.Contains(err.Error(), "needs Node.js, but node was not found") || !strings.Contains(errout, "warning: ignoring the typescript plugin manifest") {
+			t.Fatalf("%s: %v %q", manifest, err, errout)
+		}
+	}
+}
+
+func TestMissingManifestFallsBackSilently(t *testing.T) {
+	t.Setenv("PATH", fakeProfiler(t, "rc-profiler-typescript"))
+	if _, errout, err := rc("profile", "typescript", "generate"); err == nil || errout != "" {
+		t.Fatalf("%v %q", err, errout)
+	}
+}
+
+func TestCoreSchemaIsCheckedAfterThePluginAndRuntimeChecks(t *testing.T) {
+	plugin := fakeProfiler(t, "rc-profiler-typescript")
+	t.Setenv("FAKE_SCHEMAS", `["0.2.0"]`)
+	t.Setenv("PATH", plugin)
+	if _, _, err := rc("profile", "typescript", "generate"); err == nil || !strings.Contains(err.Error(), "needs Node.js") || strings.Contains(err.Error(), "core schema") {
+		t.Fatalf("%v", err)
+	}
+	t.Setenv("PATH", withPath(plugin, fakeRuntime(t, "node")))
+	if _, _, err := rc("profile", "typescript", "generate"); err == nil || !strings.Contains(err.Error(), "supports core schema 0.2.0") {
+		t.Fatalf("%v", err)
 	}
 }

@@ -16,6 +16,9 @@ func TestNpmStyleCmdShimsAreFoundAndRun(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "runtimeconditions-typescript-profiler.cmd"), []byte(shim), 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "node.cmd"), []byte("@echo off\r\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", dir)
 	var exit *ExitError
 	out, _, err := rc("profile", "typescript", "generate", "--name", "orders")

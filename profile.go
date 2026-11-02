@@ -30,8 +30,11 @@ func profileCommand() *cobra.Command {
 		Long: `Runs the profiler for <language> and passes the remaining arguments to it unchanged.
 
 The Go profiler is built into rc; RC_GO_PROFILER_BIN runs an external one instead. Any other profiler is
-the executable named by RC_<LANGUAGE>_PROFILER_BIN, else rc-profiler-<language> on PATH. The python and
-typescript profilers are also found under their own published executable names.`,
+a plugin: the executable named by RC_<LANGUAGE>_PROFILER_BIN, else rc-profiler-<language> on PATH. The python
+and typescript profilers are also found under their own published executable names.
+
+A plugin runs only when it is installed and its language runtime is on PATH. When either is missing, rc
+reports what is missing and how to install it, and does not run the plugin.`,
 		DisableFlagParsing: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
@@ -41,7 +44,10 @@ typescript profilers are also found under their own published executable names.`
 				return runBuiltinGoProfiler(c, args[1:])
 			}
 			path, err := profilerPath(args[0])
-			if err != nil {
+			if _, known := knownPlugins[args[0]]; err != nil && !known {
+				return err
+			}
+			if err = checkPlugin(args[0], path, c.ErrOrStderr()); err != nil {
 				return err
 			}
 			if runsProfiler(args[1:]) {
