@@ -302,6 +302,14 @@ func TestPluginManifestOverridesTheBuiltInRuntime(t *testing.T) {
 	}
 }
 
+func TestPluginManifestIgnoresUnknownFields(t *testing.T) {
+	installPlugin(t, "typescript", `{"language":"typescript","note":"x","runtime":{"command":"bun","name":"Bun","install":"brew install bun","minimum":"1.1"}}`)
+	_, errout, err := rc("profile", "typescript", "generate")
+	if err == nil || !strings.Contains(err.Error(), "the typescript profiler needs Bun, but bun was not found on PATH: brew install bun") || errout != "" {
+		t.Fatalf("%v %q", err, errout)
+	}
+}
+
 func TestPluginManifestAppliesToALanguageRcDoesNotKnow(t *testing.T) {
 	installPlugin(t, "ruby", `{"language":"ruby","runtime":{"command":"ruby"}}`)
 	if _, _, err := rc("profile", "ruby", "generate"); err == nil || !strings.Contains(err.Error(), "the ruby profiler needs ruby, but ruby was not found on PATH") {
@@ -314,7 +322,6 @@ func TestMalformedManifestFallsBackToTheBuiltInRuntimeWithAWarning(t *testing.T)
 		`{not json`,
 		`{"language":"python","runtime":{"command":"x"}}`,
 		`{"language":"typescript","runtime":{}}`,
-		`{"language":"typescript","runtime":{"command":"bun","minimum":"1.1"}}`,
 	} {
 		installPlugin(t, "typescript", manifest)
 		_, errout, err := rc("profile", "typescript", "generate")

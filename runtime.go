@@ -1,7 +1,6 @@
 package rc
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,9 +51,7 @@ func readManifest(language, pluginPath string) (runtimeSpec, error) {
 		return runtimeSpec{}, err
 	}
 	var manifest pluginManifest
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&manifest); err != nil {
+	if err = json.Unmarshal(data, &manifest); err != nil {
 		return runtimeSpec{}, err
 	}
 	if manifest.Language != language || manifest.Runtime.Command == "" {

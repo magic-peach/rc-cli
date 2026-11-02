@@ -21,7 +21,7 @@ it runs the plugin, with no version check, and reports a missing plugin, a missi
 {"language": "typescript", "runtime": {"command": "node", "name": "Node.js", "install": "brew install node"}}
 ```
 
-`language` and `runtime.command` are required, and no other fields are allowed. A malformed manifest is ignored with
+`language` and `runtime.command` are required; other fields are ignored. A malformed manifest is ignored with
 a warning on standard error.
 
 ## Required
