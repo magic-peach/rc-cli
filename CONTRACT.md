@@ -1,14 +1,28 @@
 # Profiler contract
 
-`rc profile <language> [args...]` runs a language profiler as a separate executable. This is
-what a profiler must do so `rc` can run it safely. Everything else about its arguments belongs
+`rc profile <language> [args...]` runs a language profiler as a separate executable, called a plugin. The
+Go profiler is built into `rc` and is not a plugin. This is what a plugin must do so `rc` can run it safely. Everything else about its arguments belongs
 to the profiler, and `rc` passes them through unchanged.
 
 ## Finding the profiler
 
 `RC_<LANGUAGE>_PROFILER_BIN`, then `rc-profiler-<language>` on `PATH`. The published
-executables `go-rc-profiler`, `runtimeconditions-python-profiler` and
-`runtimeconditions-typescript-profiler` are also found.
+executables `runtimeconditions-python-profiler` and `runtimeconditions-typescript-profiler` are also found.
+
+## Runtime and manifest
+
+A plugin runs only if it is installed and its language runtime command is on `PATH`; `rc` checks both before
+it runs the plugin, with no version check, and reports a missing plugin, a missing runtime, or both in one error.
+`rc` learns the runtime from a manifest at `<prefix>/share/rc/plugins/<language>.json` for a plugin installed at
+`<prefix>/bin/rc-profiler-<language>`, else from its built-in table for `typescript` (`node`), `python`
+(`python3`) and `java` (`java`):
+
+```json
+{"language": "typescript", "runtime": {"command": "node", "name": "Node.js", "install": "brew install node"}}
+```
+
+`language` and `runtime.command` are required, and no other fields are allowed. A malformed manifest is ignored with
+a warning on standard error.
 
 ## Required
 
@@ -39,7 +53,8 @@ existing output file untouched. Success exits 0.
 | --- | --- | --- | --- | --- |
 | TypeScript 0.1.0 | yes | yes | yes | 0.4.0 |
 | Python 0.4.0 | no (no `--version`) | no | yes | 0.4.0 |
-| Go 0.6.0 | no (plain text `--version`) | no | no | 0.4.0, and 0.2.0 input |
+
+The Go profiler is built into `rc`; its `--version --json` answers `rc doctor`.
 
 When a profiler does not answer `--version --json`, `rc` prints a note to standard error and
 runs it without the compatibility check.
