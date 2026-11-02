@@ -13,7 +13,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/runtimeconditions/extensions/tooling/extension-bindings/orchestrator"
 	goprofiler "github.com/runtimeconditions/go-rc-profiler/cli"
 	"github.com/spf13/cobra"
 )
@@ -88,8 +87,6 @@ func builtinGoInfo() (info profilerInfo) {
 	if goprofiler.Run(context.Background(), []string{"--version", "--json"}, &out, io.Discard) == nil {
 		_ = json.Unmarshal(out.Bytes(), &info)
 	}
-	if identity, err := orchestrator.ModuleIdentity(goProfilerModule, ""); err == nil {
-		info.Version = identity.Version
-	}
+	info.Version = ""
 	return info
 }
